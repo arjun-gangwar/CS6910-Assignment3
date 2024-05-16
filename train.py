@@ -12,7 +12,11 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence 
 
+from model import EncoderRNN, DecoderRNN
+
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"{device=}")
 
 # constants
 SOS_TOKEN = 0
@@ -67,9 +71,81 @@ class CollateFunc():
         source = pad_sequence(source, batch_first=True, padding_value=self.pad_idx)
         target = pad_sequence(target, batch_first=True, padding_value=self.pad_idx)
         return source, target
+    
+def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion):
+    total_loss = 0
+    for data in dataloader:
+        input_tensor, target_tensor = data[0].to(device), data[1].to(device)
+
+        encoder_optimizer.zero_grad()
+        decoder_optimizer.zero_grad()
+
+        encoder_outputs, encoder_hidden = encoder(input_tensor)
+        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
+
+        loss = criterion(
+            decoder_outputs.view(-1, decoder_outputs.size(-1)),
+            target_tensor.view(-1)
+        )
+        loss.backward()
+
+        encoder_optimizer.step()
+        decoder_optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(dataloader)
+
+@torch.no_grad()
+def valid_epoch(dataloader, encoder, decoder, criterion):
+    total_loss = 0
+    for data in dataloader:
+        input_tensor, target_tensor = data[0].to(device), data[1].to(device)
+
+        encoder_outputs, encoder_hidden = encoder(input_tensor)
+        # add teacher forcing using if statement
+        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
+
+        loss = criterion(
+            decoder_outputs.view(-1, decoder_outputs.size(-1)),
+            target_tensor.view(-1)
+        )
+
+        total_loss += loss.item()
+
+    return total_loss / len(dataloader)
+
+def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001):
+    train_loss_hist = []
+    valid_loss_hist = []
+    train_acc_hist = []
+    valid_acc_hist = []
+
+    encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
+    decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate)
+    criterion = nn.NLLLoss()
+
+    for epoch in range(1, n_epochs + 1):
+        train_loss = train_epoch(train_dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+        valid_loss = valid_epoch(train_dataloader, encoder, decoder, criterion)
+        
+        # print losses and main histories
+        print(f"epoch: {epoch}, avg_train_loss: {train_loss}, avg_valid_loss: {valid_loss}")
+        train_loss_hist.append(train_loss)
+        valid_loss_hist.append(valid_loss)
+
 
 def main(args: argparse.Namespace):
-    pass
+    if args.use_wandb:
+        pass
+    else:
+        encoder = EncoderRNN(SOURCE_VOCAB_SIZE, 
+                             HIDDEN_SIZE).to(device)
+        decoder = DecoderRNN(HIDDEN_SIZE, 
+                             TARGET_VOCAB_SIZE, 
+                             MAX_LENGTH).to(device)
+        train(trainDataLoader, encoder, decoder, 30)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Training file for assignment 3")
@@ -133,12 +209,17 @@ if __name__ == '__main__':
                         type=float, 
                         default=1e-4,
                         help="Learning Rate")
+    parser.add_argument("-ml", 
+                        "--max_length", 
+                        type=int, 
+                        default=25,
+                        help="Max Sequence Length")
     args = parser.parse_args()
     logging.info(args)
 
     # constants
-    HIDDEN_SIZE = 256
-    MAX_LENGTH = 25
+    HIDDEN_SIZE = args.hidden_layer_size
+    MAX_LENGTH = args.max_length
 
     train_df = pd.read_csv("/speech/arjun/1study/CS6910-Assignment3/dataset/aksharantar_sampled/hin/hin_train.csv", header=None)
     valid_df = pd.read_csv("/speech/arjun/1study/CS6910-Assignment3/dataset/aksharantar_sampled/hin/hin_valid.csv", header=None)
@@ -150,9 +231,9 @@ if __name__ == '__main__':
     validDataset = TextDataset(valid_df)
     testDataset = TextDataset(test_df)
 
-    trainDataLoader = DataLoader(trainDataset, batch_size=32, shuffle=True, num_workers=0, collate_fn=CollateFunc(PAD_TOKEN))
-    validDataLoader = DataLoader(validDataset, batch_size=32, shuffle=True, num_workers=0, collate_fn=CollateFunc(PAD_TOKEN))
-    testDataloader = DataLoader(testDataset, batch_size=32, shuffle=False, num_workers=0, collate_fn=CollateFunc(PAD_TOKEN))
+    trainDataLoader = DataLoader(trainDataset, batch_size=32, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
+    validDataLoader = DataLoader(validDataset, batch_size=32, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
+    testDataloader = DataLoader(testDataset, batch_size=32, shuffle=False, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
 
     SOURCE_VOCAB_SIZE = len(trainDataset.source_vocab.char2int)
     TARGET_VOCAB_SIZE = len(trainDataset.target_vocab.char2int)

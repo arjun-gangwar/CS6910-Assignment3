@@ -4,9 +4,18 @@ import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"{device=}")
+
+# constants
+SOS_TOKEN = 0
+EOS_TOKEN = 1
+PAD_TOKEN = 2
+UNK_TOKEN = 3
     
 class EncoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, dropout_p=0.1):
+    def __init__(self, 
+                 input_size, 
+                 hidden_size, 
+                 dropout_p=0.1):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.embedding = nn.Embedding(input_size, hidden_size)
@@ -19,7 +28,10 @@ class EncoderRNN(nn.Module):
         return output, hidden
     
 class DecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, max_length):
+    def __init__(self, 
+                 hidden_size, 
+                 output_size, 
+                 max_length):
         super(DecoderRNN, self).__init__()
         self.max_length = max_length
         self.embedding = nn.Embedding(output_size, hidden_size)
