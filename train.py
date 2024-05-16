@@ -1,4 +1,5 @@
 import os
+import logging
 import argparse
 import numpy as np
 import pandas as pd
@@ -10,6 +11,8 @@ from torch import optim
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence 
+
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 # constants
 SOS_TOKEN = 0
@@ -76,7 +79,7 @@ if __name__ == '__main__':
                         action="store_true",
                         help="Use Weights and Biases or not")
     parser.add_argument("-wp", 
-                        "--wandb_project", 
+                        "--wandb_project",
                         type=str, 
                         default="CS6910-Assignment2",
                         help="Project name used to track experiments in Weights & Biases dashboard")
@@ -85,22 +88,53 @@ if __name__ == '__main__':
                         type=str,
                         default="arjungangwar",
                         help="Wandb Entity used to track experiments in the Weights & Biases dashboard.")
-    parser.add_argument("-wp", 
-                        "--wandb_project", 
+    parser.add_argument("-ie", 
+                        "--in_embed_dims", 
+                        type=int, 
+                        default=256,
+                        help="Input Embedding Dimension")
+    parser.add_argument("-el", 
+                        "--n_encoder_layers", 
+                        type=int, 
+                        default=1,
+                        help="Number of Encoder Layers")
+    parser.add_argument("-dl", 
+                        "--n_decoder_layers", 
+                        type=int, 
+                        default=1,
+                        help="Number of Decoder Layers")
+    parser.add_argument("-hs", 
+                        "--hidden_layer_size", 
+                        type=int, 
+                        default=128,
+                        help="Hidden Layer Size")
+    parser.add_argument("-ct", 
+                        "--cell_type", 
                         type=str, 
-                        default="CS6910-Assignment2",
-                        help="Project name used to track experiments in Weights & Biases dashboard")
-    parser.add_argument("-wp", 
-                        "--wandb_project", 
-                        type=str, 
-                        default="CS6910-Assignment2",
-                        help="Project name used to track experiments in Weights & Biases dashboard")
-    parser.add_argument("-wp", 
-                        "--wandb_project", 
-                        type=str, 
-                        default="CS6910-Assignment2",
-                        help="Project name used to track experiments in Weights & Biases dashboard")
+                        default="gru",
+                        help="Cell Type: rnn, lstm, gru")
+    parser.add_argument("-bi", 
+                        "--bidirectional", 
+                        type=int, 
+                        default=0,
+                        help="Bidirectional (0: False, 1: True)")
+    parser.add_argument("-do", 
+                        "--dropout", 
+                        type=float, 
+                        default=0.2,
+                        help="Dropout Percentage")
+    parser.add_argument("-ne", 
+                        "--n_epochs", 
+                        type=int, 
+                        default=30,
+                        help="Number of Epochs")
+    parser.add_argument("-lr", 
+                        "--learning_rate", 
+                        type=float, 
+                        default=1e-4,
+                        help="Learning Rate")
     args = parser.parse_args()
+    logging.info(args)
 
     # constants
     HIDDEN_SIZE = 256
