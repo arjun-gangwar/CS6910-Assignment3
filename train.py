@@ -89,8 +89,12 @@ def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimiz
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
 
-        encoder_outputs, encoder_hidden = encoder(input_tensor)
-        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
+        if encoder.cell_type == "lstm":
+            encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state, target_tensor)
+        else:
+            encoder_outputs, encoder_hidden = encoder(input_tensor)
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
 
         loss = criterion(
             decoder_outputs.view(-1, decoder_outputs.size(-1)),
@@ -115,9 +119,13 @@ def valid_epoch(dataloader, encoder, decoder, criterion):
     for data in dataloader:
         input_tensor, target_tensor = data[0].to(device), data[1].to(device)
 
-        encoder_outputs, encoder_hidden = encoder(input_tensor)
-        # add teacher forcing using if statement
-        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
+        if encoder.cell_type == "lstm":
+            encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state, target_tensor)
+        else:
+            encoder_outputs, encoder_hidden = encoder(input_tensor)
+            # add teacher forcing using if statement
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
 
         loss = criterion(
             decoder_outputs.view(-1, decoder_outputs.size(-1)),
@@ -188,13 +196,21 @@ def main(args: argparse.Namespace):
     if args.use_wandb:
         pass
     else:
-        encoder = EncoderRNN(SOURCE_VOCAB_SIZE, 
-                             HIDDEN_SIZE).to(device)
-        decoder = DecoderRNN(HIDDEN_SIZE, 
-                             TARGET_VOCAB_SIZE, 
-                             MAX_LENGTH).to(device)
-        train(trainDataLoader, encoder, decoder, 30)
-
+        encoder = EncoderRNN(input_size=SOURCE_VOCAB_SIZE, 
+                             hidden_size=HIDDEN_SIZE,
+                             in_embed_dims=args.in_embed_dims,
+                             cell_type=args.cell_type,
+                             max_length=MAX_LENGTH,
+                             n_layers=args.n_layers,
+                             bidirectional=args.bidirectional).to(device)
+        decoder = DecoderRNN(output_size=TARGET_VOCAB_SIZE,
+                             hidden_size=HIDDEN_SIZE,
+                             in_embed_dims=args.in_embed_dims,
+                             cell_type=args.cell_type,
+                             max_length=MAX_LENGTH,
+                             n_layers=args.n_layers,
+                             bidirectional=args.bidirectional).to(device)
+        train(trainDataLoader, encoder, decoder, n_epochs=args.n_epochs, learning_rate=args.learning_rate)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Training file for assignment 3")
@@ -218,16 +234,11 @@ if __name__ == '__main__':
                         type=int, 
                         default=256,
                         help="Input Embedding Dimension")
-    parser.add_argument("-el", 
-                        "--n_encoder_layers", 
-                        type=int, 
-                        default=1,
-                        help="Number of Encoder Layers")
     parser.add_argument("-dl", 
-                        "--n_decoder_layers", 
+                        "--n_layers", 
                         type=int, 
                         default=1,
-                        help="Number of Decoder Layers")
+                        help="Number of Layers in Encoder and Decoder")
     parser.add_argument("-hs", 
                         "--hidden_layer_size", 
                         type=int, 
@@ -240,9 +251,9 @@ if __name__ == '__main__':
                         help="Cell Type: rnn, lstm, gru")
     parser.add_argument("-bi", 
                         "--bidirectional", 
-                        type=int, 
-                        default=0,
-                        help="Bidirectional (0: False, 1: True)")
+                        default=False,
+                        action="store_true",
+                        help="Bidirectional (False, True)")
     parser.add_argument("-do", 
                         "--dropout", 
                         type=float, 
