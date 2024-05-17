@@ -72,8 +72,17 @@ class CollateFunc():
         target = pad_sequence(target, batch_first=True, padding_value=self.pad_idx)
         return source, target
     
+def calculate_accuracy(decoder_outputs, target_tensor):
+    _, topi = decoder_outputs.topk(1)
+    decoded_ids = topi.squeeze()
+
+    comp = ((decoded_ids == target_tensor).to(torch.float).mean(dim=-1)).to(torch.long)
+
+    return sum(comp)/len(comp)
+    
 def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion):
     total_loss = 0
+    total_acc = 0
     for data in dataloader:
         input_tensor, target_tensor = data[0].to(device), data[1].to(device)
 
@@ -89,16 +98,20 @@ def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimiz
         )
         loss.backward()
 
+        acc = calculate_accuracy(decoder_outputs, target_tensor)
+
         encoder_optimizer.step()
         decoder_optimizer.step()
 
         total_loss += loss.item()
+        total_acc += acc
 
-    return total_loss / len(dataloader)
+    return total_loss / len(dataloader), total_acc / len(dataloader)
 
 @torch.no_grad()
 def valid_epoch(dataloader, encoder, decoder, criterion):
     total_loss = 0
+    total_acc = 0
     for data in dataloader:
         input_tensor, target_tensor = data[0].to(device), data[1].to(device)
 
@@ -111,9 +124,12 @@ def valid_epoch(dataloader, encoder, decoder, criterion):
             target_tensor.view(-1)
         )
 
-        total_loss += loss.item()
+        acc = calculate_accuracy(decoder_outputs, target_tensor)
 
-    return total_loss / len(dataloader)
+        total_loss += loss.item()
+        total_acc += acc
+
+    return total_loss / len(dataloader), total_acc / len(dataloader)
 
 def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001):
     train_loss_hist = []
@@ -126,13 +142,46 @@ def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001):
     criterion = nn.NLLLoss()
 
     for epoch in range(1, n_epochs + 1):
-        train_loss = train_epoch(train_dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
-        valid_loss = valid_epoch(train_dataloader, encoder, decoder, criterion)
+        train_loss, train_acc = train_epoch(train_dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+        valid_loss, valid_acc = valid_epoch(train_dataloader, encoder, decoder, criterion)
         
         # print losses and main histories
-        print(f"epoch: {epoch}, avg_train_loss: {train_loss}, avg_valid_loss: {valid_loss}")
+        print(f"epoch: {epoch}, avg_train_loss: {train_loss}, avg_valid_loss: {valid_loss}, avg_train_acc: {train_acc}, avg_valid_acc: {valid_acc}")
         train_loss_hist.append(train_loss)
         valid_loss_hist.append(valid_loss)
+        train_acc_hist.append(train_acc)
+        valid_acc_hist.append(valid_acc)
+
+# evaluate on test set
+@torch.no_grad()
+def evaluate(dataloader, target_vocab, encoder, decoder):  
+    all_words = []
+    for data in dataloader:
+        input_tensor = data[0].to(device)
+
+        encoder_outputs, encoder_hidden = encoder(input_tensor)
+        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs)
+
+        _, topi = decoder_outputs.topk(1)
+        decoded_ids = topi.squeeze()
+
+        decoded_words = []
+        for i in range(len(input_tensor)):
+            word = []
+            for idx in decoded_ids[i, 1:]:
+                if idx.item() == EOS_TOKEN:
+                    break
+                word.append(idx.item())
+            decoded_words.append(word)
+        
+        detokenized_words = []
+        for word in decoded_words:
+            detokenized_words.append(target_vocab.detokenize(word))
+        
+        for word in detokenized_words:
+            all_words.append("".join(word))
+            
+    return all_words
 
 
 def main(args: argparse.Namespace):
