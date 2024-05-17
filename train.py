@@ -265,7 +265,7 @@ def main(args: argparse.Namespace):
             },
             'parameters': {
                 'in_embed_dims': {
-                    'values': [16, 32, 64, 128]
+                    'values': [64, 128, 256]
                 },'learning_rate': {
                     'values': [1e-3, 1e-4]
                 },'batch_size':{
@@ -273,7 +273,7 @@ def main(args: argparse.Namespace):
                 },'n_layers':{
                     'values': [1,2,3]
                 },'hidden_layer_size':{
-                    'values': [32, 64, 128, 256]
+                    'values': [64, 128, 256]
                 },'cell_type':{
                     'values': ["rnn", "gru", "lstm"]
                 },'dropout':{

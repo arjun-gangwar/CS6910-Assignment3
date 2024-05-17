@@ -1,5 +1,5 @@
 #!/bin/bash
-use_wandb=false
+use_wandb=true
 wandb_project=CS6910-Assignment3
 wandb_entity=arjungangwar
 in_embed_dims=128           # 32, 64, 128
