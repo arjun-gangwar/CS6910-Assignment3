@@ -2,15 +2,16 @@
 use_wandb=false
 wandb_project=CS6910-Assignment3
 wandb_entity=arjungangwar
-in_embed_dims=128           # 16, 32, 64, 128
-n_layers=2                  # 1, 2, 3
-hidden_layer_size=128       # 16, 32, 64, 128, 256
+in_embed_dims=128           # 32, 64, 128
+n_layers=3                  # 1, 2, 3
+hidden_layer_size=128       # 32, 64, 128, 256
 cell_type=lstm               # rnn, lstm, gru
 bidirectional=true         # true, false
 dropout=0.2
 n_epochs=15
 learning_rate=1e-3
 max_length=25
+batch_size=32
 
 opts=
 if ${use_wandb}; then 
@@ -31,4 +32,5 @@ python train.py \
     --n_epochs ${n_epochs} \
     --learning_rate ${learning_rate} \
     --max_length ${max_length} \
+    --batch_size ${batch_size} \
     ${opts}

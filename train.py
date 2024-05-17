@@ -1,4 +1,5 @@
 import os
+import wandb
 import logging
 import argparse
 import numpy as np
@@ -80,7 +81,7 @@ def calculate_accuracy(decoder_outputs, target_tensor):
 
     return sum(comp)/len(comp)
     
-def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion):
+def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, teacher_forcing_ratio):
     total_loss = 0
     total_acc = 0
     for data in dataloader:
@@ -89,12 +90,20 @@ def train_epoch(dataloader, encoder, decoder, encoder_optimizer, decoder_optimiz
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
 
-        if encoder.cell_type == "lstm":
-            encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
-            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state, target_tensor)
+        if torch.rand(1).item() > teacher_forcing_ratio:  # teacher forcing
+            if encoder.cell_type == "lstm":
+                encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
+                decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state, target_tensor)
+            else:
+                encoder_outputs, encoder_hidden = encoder(input_tensor)
+                decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
         else:
-            encoder_outputs, encoder_hidden = encoder(input_tensor)
-            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, target_tensor)
+            if encoder.cell_type == "lstm":
+                encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
+                decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state)
+            else:
+                encoder_outputs, encoder_hidden = encoder(input_tensor)
+                decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs)
 
         loss = criterion(
             decoder_outputs.view(-1, decoder_outputs.size(-1)),
@@ -139,7 +148,7 @@ def valid_epoch(dataloader, encoder, decoder, criterion):
 
     return total_loss / len(dataloader), total_acc / len(dataloader)
 
-def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001):
+def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001, use_wandb=False):
     train_loss_hist = []
     valid_loss_hist = []
     train_acc_hist = []
@@ -149,16 +158,31 @@ def train(train_dataloader, encoder, decoder, n_epochs, learning_rate=0.001):
     decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate)
     criterion = nn.NLLLoss()
 
+    initial_teacher_forcing_ratio = 0.9
+    final_teacher_forcing_ratio = 0.5
+
+
     for epoch in range(1, n_epochs + 1):
-        train_loss, train_acc = train_epoch(train_dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+        teacher_forcing_ratio = initial_teacher_forcing_ratio - (initial_teacher_forcing_ratio - final_teacher_forcing_ratio) * (epoch / n_epochs)
+        train_loss, train_acc = train_epoch(train_dataloader, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, teacher_forcing_ratio)
         valid_loss, valid_acc = valid_epoch(train_dataloader, encoder, decoder, criterion)
         
         # print losses and main histories
         print(f"epoch: {epoch}, avg_train_loss: {train_loss}, avg_valid_loss: {valid_loss}, avg_train_acc: {train_acc}, avg_valid_acc: {valid_acc}")
+        print(f"teacher forcing ratio: {teacher_forcing_ratio}")
         train_loss_hist.append(train_loss)
         valid_loss_hist.append(valid_loss)
         train_acc_hist.append(train_acc)
         valid_acc_hist.append(valid_acc)
+
+        if use_wandb:
+            wandb.log({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'valid_loss': valid_loss,
+                'train_acc': train_acc*100,
+                'valid_acc': valid_acc*100
+            })
 
 # evaluate on test set
 @torch.no_grad()
@@ -167,8 +191,12 @@ def evaluate(dataloader, target_vocab, encoder, decoder):
     for data in dataloader:
         input_tensor = data[0].to(device)
 
-        encoder_outputs, encoder_hidden = encoder(input_tensor)
-        decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs)
+        if encoder.cell_type == "lstm":
+            encoder_outputs, encoder_hidden, encoder_state = encoder(input_tensor)
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs, encoder_state)
+        else:
+            encoder_outputs, encoder_hidden = encoder(input_tensor)
+            decoder_outputs, _ = decoder(encoder_hidden, encoder_outputs)
 
         _, topi = decoder_outputs.topk(1)
         decoded_ids = topi.squeeze()
@@ -191,10 +219,77 @@ def evaluate(dataloader, target_vocab, encoder, decoder):
             
     return all_words
 
+def wandb_sweep():
+    with wandb.init() as run:
+        config = wandb.config
+        in_embed_dims = config.in_embed_dims
+        learning_rate = config.learning_rate
+        batch_size = config.batch_size
+        n_layers = config.n_layers
+        hidden_layer_size = config.hidden_layer_size
+        cell_type = config.cell_type
+        dropout = config.dropout
+        n_epochs = config.n_epochs
+        bidirectional = config.bidirectional
+        max_length = config.max_length
+
+        run_name=f"bs_{batch_size}_ie_{in_embed_dims}_lr_{learning_rate}_hl_{hidden_layer_size}_cl_{cell_type}_bi_{bidirectional}"
+        wandb.run.name=run_name
+
+        encoder = EncoderRNN(input_size=SOURCE_VOCAB_SIZE, 
+                             hidden_size=hidden_layer_size,
+                             in_embed_dims=in_embed_dims,
+                             cell_type=cell_type,
+                             max_length=max_length,
+                             n_layers=n_layers,
+                             bidirectional=bidirectional,
+                             dropout_p=dropout).to(device)
+        decoder = DecoderRNN(output_size=TARGET_VOCAB_SIZE,
+                             hidden_size=hidden_layer_size,
+                             in_embed_dims=in_embed_dims,
+                             cell_type=cell_type,
+                             max_length=max_length,
+                             n_layers=n_layers,
+                             bidirectional=bidirectional).to(device)
+        train(trainDataLoader, encoder, decoder, n_epochs=n_epochs, learning_rate=learning_rate, use_wandb=True)
 
 def main(args: argparse.Namespace):
     if args.use_wandb:
-        pass
+        wandb.login()
+        sweep_config = {
+            'method': 'bayes',
+            'name' : 'RNN sweeps May 17th',
+            'metric': {
+                'name': 'valid_acc',
+                'goal': 'maximize'
+            },
+            'parameters': {
+                'in_embed_dims': {
+                    'values': [16, 32, 64, 128]
+                },'learning_rate': {
+                    'values': [1e-3, 1e-4]
+                },'batch_size':{
+                    'values': [32,64,128]
+                },'n_layers':{
+                    'values': [1,2,3]
+                },'hidden_layer_size':{
+                    'values': [32, 64, 128, 256]
+                },'cell_type':{
+                    'values': ["rnn", "gru", "lstm"]
+                },'dropout':{
+                    'values': [0.2, 0.5]
+                },'n_epochs':{
+                    'values': [10]
+                },'bidirectional':{
+                    'values': [True, False]
+                },'max_length':{
+                    'values': [25]
+                }
+            }
+        }
+        sweep_id = wandb.sweep(sweep=sweep_config, project=args.wandb_project)
+        wandb.agent(sweep_id, function=wandb_sweep, count=50)
+        wandb.finish()
     else:
         encoder = EncoderRNN(input_size=SOURCE_VOCAB_SIZE, 
                              hidden_size=HIDDEN_SIZE,
@@ -211,6 +306,11 @@ def main(args: argparse.Namespace):
                              n_layers=args.n_layers,
                              bidirectional=args.bidirectional).to(device)
         train(trainDataLoader, encoder, decoder, n_epochs=args.n_epochs, learning_rate=args.learning_rate)
+        encoder.eval()
+        decoder.eval()
+        decoded_words = evaluate(testDataloader, trainDataset.target_vocab, encoder, decoder)
+        comparisions = [hypo == ref for hypo, ref in zip(decoded_words,test_df[1].tolist())]
+        print(f"Test Error: {sum(comparisions) / len(comparisions)}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Training file for assignment 3")
@@ -274,12 +374,18 @@ if __name__ == '__main__':
                         type=int, 
                         default=25,
                         help="Max Sequence Length")
+    parser.add_argument("-bs", 
+                        "--batch_size", 
+                        type=int, 
+                        default=32,
+                        help="Batch Size")
     args = parser.parse_args()
     logging.info(args)
 
     # constants
     HIDDEN_SIZE = args.hidden_layer_size
     MAX_LENGTH = args.max_length
+    BATCH_SIZE = args.batch_size
 
     train_df = pd.read_csv("/speech/arjun/1study/CS6910-Assignment3/dataset/aksharantar_sampled/hin/hin_train.csv", header=None)
     valid_df = pd.read_csv("/speech/arjun/1study/CS6910-Assignment3/dataset/aksharantar_sampled/hin/hin_valid.csv", header=None)
@@ -291,9 +397,9 @@ if __name__ == '__main__':
     validDataset = TextDataset(valid_df)
     testDataset = TextDataset(test_df)
 
-    trainDataLoader = DataLoader(trainDataset, batch_size=32, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
-    validDataLoader = DataLoader(validDataset, batch_size=32, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
-    testDataloader = DataLoader(testDataset, batch_size=32, shuffle=False, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
+    trainDataLoader = DataLoader(trainDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
+    validDataLoader = DataLoader(validDataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
+    testDataloader = DataLoader(testDataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, collate_fn=CollateFunc(PAD_TOKEN))
 
     SOURCE_VOCAB_SIZE = len(trainDataset.source_vocab.char2int)
     TARGET_VOCAB_SIZE = len(trainDataset.target_vocab.char2int)

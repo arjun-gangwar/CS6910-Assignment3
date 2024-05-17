@@ -54,7 +54,7 @@ class EncoderRNN(nn.Module):
     
 class DecoderRNN(nn.Module):
     def __init__(self,
-                 output_size, 
+                 output_size,
                  hidden_size, 
                  in_embed_dims,
                  cell_type,
